@@ -1,0 +1,8 @@
+python-telegram-bot
+google-search-results
+pymongo
+dnspython
+pyrogram
+tgcrypto
+pillow
+rembg
