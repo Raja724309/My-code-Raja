@@ -1,33 +1,68 @@
 
 import os
-import asyncio
-from pyrogram import Client, filters
-from database import init_db, log_bad_action
+import logging
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from pymongo import MongoClient
+from rembg import remove
+from PIL import Image
+from serpapi import GoogleSearch
+from dotenv import load_dotenv
 
-# Environment variables se keys uthaayein
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+load_dotenv()
 
-app = Client("AI_Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Configuration (Ab ye Render ke Environment Variables se link uthayega)
+TOKEN = os.environ.get("8562390719:AAGo9y6MkqSpHMVxW_9aTabPmEjr8FijFwk")
+MONGO_URI = os.environ.get("mongodb+srv://rajapundhir963450_db_user:<mEVu3SVVknbe3WLd>@cluster0.r8n3ro0.mongodb.net/?appName=Cluster0")
+SERP_API_KEY = os.environ.get("716c569560f9229b7321d80c14c102b54272efe979c5ee93d6cea9f1d0802443")
 
-# Initialize database
-init_db()
+# Database
+client = MongoClient(MONGO_URI)
+db = client.bot_database 
+logs_col = db.logs 
 
-@app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply("🤖 **AI Bot Online!**\n\nSend a photo to start processing.")
+logging.basicConfig(level=logging.INFO)
 
-@app.on_message(filters.text)
-async def handle_text(client, message):
-    # Security: Bad word filter
-    bad_words = ["gali1", "gali2"] # Yahan apni list add karein
-    if any(word in message.text.lower() for word in bad_words):
-        await message.delete()
-        log_bad_action(message.from_user.id, "Used abusive language")
-        await client.send_message(message.chat.id, "⚠️ **Warning:** Faltu harkat na karein!")
-    else:
-        await message.reply("AI mode active hai... Photo bhejiye.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Bot active hai!\n/trends - AI News\nPhoto bhejo - Background hatane ke liye.")
 
-print("Bot is starting...")
-app.run()
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    input_file = f"input_{user_id}.jpg"
+    output_file = f"output_{user_id}.png"
+    
+    file = await update.message.photo[-1].get_file()
+    await file.download_to_drive(input_file)
+    
+    input_img = Image.open(input_file)
+    output_img = remove(input_img)
+    output_img.save(output_file)
+    
+    await update.message.reply_photo(photo=open(output_file, "rb"))
+    
+    if os.path.exists(input_file): os.remove(input_file)
+    if os.path.exists(output_file): os.remove(output_file)
+
+async def get_trends(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        search = GoogleSearch({"engine": "google", "q": "latest AI news", "api_key": SERP_API_KEY})
+        results = search.get_dict().get("organic_results", [])[:3]
+        response = "🚀 **Latest Trends:**\n\n" + "\n\n".join([f"• {r['title']}\n🔗 {r['link']}" for r in results])
+        await update.message.reply_text(response)
+    except Exception as e:
+        await update.message.reply_text("Trend load karne mein error aaya.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if any(word in text for word in ["gaali", "faltu"]):
+        logs_col.insert_one({"user_id": update.effective_user.id, "action": "Bad Action"})
+        await update.message.reply_text("🚫 Faltu harkat record ho gayi hai.")
+
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("trends", get_trends))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("Bot is running...")
+    app.run_polling()
